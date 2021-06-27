@@ -1,0 +1,368 @@
+---
+title: "EDA of EU Rivers"
+author: "Vera Vavan"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = T)
+knitr::opts_knit$set(root.dir = 'C:/Users/User/Desktop/UNI/Classes/2nd semester/Exploratory Data Analysis/eda_rivers_project')
+# packages
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+library(mapview)
+library(sf)
+library(knitr)
+getwd()
+#data
+country_info <- readRDS('./data/country_info.rds')
+country_info_new <- readRDS('./data/country_info_new.rds')
+stations_info <- readRDS('./data/stations_info_final.rds')
+stations_info_raw <- readRDS('./data/stations_info_raw.rds')
+rivers_info <- readRDS('./data/rivers_info.rds')
+runoff_yearly_stats_sum <- readRDS('./data/runoff_yearly_stats_sum')
+runoff_max_change <- readRDS('./data/runoff_max_change')
+runoff_min_change <- readRDS('./data/runoff_min_change')
+runoff_overall_summer <- readRDS('./data/runoff_overall_summer.rds')
+runoff_overall_winter <- readRDS('./data/runoff_overall_winter.rds')
+colset_4 <-  c("#D35C37", "#BF9A77", "#D6C6B9", "#97B8C2")
+runoff_info <- readRDS('./data/runoff_values_edited.rds')
+five_month <- readRDS('./data/five_month.rds')
+five_summer <- readRDS('./data/five_summer.rds')
+five_winter <- readRDS('./data/five_winter.rds')
+five_win_sum <- readRDS('./data/five_win_sum.rds')
+```
+
+<div align="justify">
+This report will explore the trends and changes in the runoff of 153 European rivers before and after the year 1980. The dataset used for the exploration was provided by Global Runoff Data Center. 
+
+Changes in river runoff can be an indicator of other changes in the environment, such as temperature changes, increases and decreases in precipitation, air pollution and many others. Therefore, there are many factors that can influence the river runoff, such as the topography at the certain point of the river. Hence, the first step is exploring the stations that are measuring the runoff at different locations in Europe. 
+
+# Stations
+
+Firstly, the location of the station can influence the runoff drastically, depending on how close to the ocean it is, whether it is closer to the poles or the equator, and the surroundings, whether it is a highland or lowland.
+Secondly, the stations should have enough data for the exploration to be significant. Since each station started recording data at a different time, a set range needs to be defined to limit our data.
+Lastly, it is also important to examine the rivers themselves, since they can flow through multiple countries and landscapes, therefore changing their flow and runoff at different locations.
+
+## Locations
+
+The data supplied comes from 208 different stations located in 19 different European countries. The locations can be seen on the map, and the altitude can be seen for each station if clicked. Besides that, the colors of the points represent the categories for stations regions, depending on which part of Europe they belong to. 
+
+```{r, echo=FALSE, fig.align='center'}
+stations_info_raw[, location_class := factor('East EU')]
+stations_info_raw[(Lon >= 5 & Lon <= 17) & Lat < 55, location_class := factor('Central EU')]
+stations_info_raw[(Lon >= 3 & Lon <= 30) & Lat >= 55.1, location_class := factor('North EU')]
+stations_info_raw[Lon < 3, location_class := factor('West EU')]
+stations_coords <- st_as_sf(stations_info_raw,
+                            coords = c('Lon', 'Lat'),
+                            crs = 4326)
+stat_map <- mapview(stations_coords, map.types = 'OpenTopoMap', zcol='location_class')
+stat_map
+```
+
+It can be seen that there is a larger amount of stations in Central and Northern Europe, especially around Germany. An important limitation to this investigation is the fact that 43 out of 208 stations have unknown altitude, and most of them are in Sweden and Norway. However, just by looking at their location on a topographic map and nearby stations, it can clearly be seen whether the stations are in a mountain area, or in a lowland area. Therefore, they are still relevant to the analysis. 
+
+Besides the location of stations and the topography around them, it is also important to note that there are 153 rivers whose runoff is being measured. 
+
+## Distribution
+
+Since there is a large amount of data, there needs to be some cleaning up and limiting the data. To see which countries and stations matter the most, the distribution of stations and rivers per country, as well as the average number of years the stations in the country have been recording the data for, can be examined in the table below. 
+
+```{r, echo=FALSE}
+kable(country_info, caption='Information about stations in each country')
+```
+
+The year that is examined is 1980, therefore the age range that we need to consider is at least 30 years before and 30 years after in order to respect the climatic period. It can be seen in the table that all countries (and stations) have more than 80 years of observation, making them all eligible for our criteria. It can also be seen that the countries that stand out are again Nordic countries and Germany (with Switzerland), since they have a larger amount of stations and rivers measured.
+
+## Rivers
+
+To examine the rivers length and characteristics, the table below can be examined, which shows the number of stations per river and the amount of countries that the stations are located in. Since most of the 153 rivers have only one or two stations and flow through one country, only the first five rivers with the most stations are displayed.
+
+```{r, echo=FALSE}
+kable(head(rivers_info, 5), caption='Information about rivers')
+```
+
+It can be seen above that these rivers stand out with comparatively large number of stations. The one that stands out the most is the Danube river, which is expected due to the fact that it is the second largest river in Europe, right after Volga. However, Volga cannot be seen here since there are very few stations located in Western Europe in the data, while Danube flows right through the area where the map shows a large cluster of stations - in Central Europe.
+
+The same goes for the other rivers seen in the table, Rhine, Else and Weser are all rivers that mainly flow through Germany, while Kokemaenjoki flows through Finland where there is another cluster of stations. 
+
+# Data Exploration
+
+After exploring the stations that measure the runoff, the next step is inspecting the runoff values measured. Firstly, the data itself has to be prepared before it is used in calculations. Secondly, due to the size of the data and the amount of stations, it has to be aggregated in some way. This data was aggregated to a yearly scale for each station, then the stations were divided into different groups that follow similar runoff patterns and finally, the data was aggregated to show patterns during seasons. Due to these changes, the runoff trends can be seen in a more clear and understandable way, even with the high amounts of data.
+
+## Data Preparation
+
+Upon inspecting the data, it could be noticed right away that there are negative values of runoff, which cannot be possible, therefore they are regarded as missing values. The amount of missing values was not large, there were only 52 141 missing values in total in 103 stations. However, two stations had a relatively large amount of missing data compared to the amount of data they had in total, which was 53% and 11%. They are located in Russia and Romania, which are both in Western Europe and not as relevant to the analysis since most of the data comes from Central and North Europe. Therefore, these stations were removed from the data.
+
+All other stations had only 0-5% of missing data, which is why they are regarded as relevant, and the missing values were removed. Another factor affecting the data calculation is the age range considered. Since the year 1980 needs to be considered, the minimal age range for the data is from 1950 to 2010. Luckily, most stations have started recording data before 1950 and ended after 2010, however some stations had to be eliminated from the investigation, since it would not be relevant to use stations that stopped recording data in 1979. Therefore, the amount of stations changed from 208 to 173 in total, and some countries no longer have any stations located in them, which can be seen in the table below. 
+
+```{r, echo=FALSE, comment=NA}
+print(country_info_new)
+```
+
+Looking at this table, it can be noticed that most stations that were not relevant are not a part of Central and Northern Europe, where we have the most reliable data to inspect runoff with confidence. Since the data is cleaned up and prepared for inspection, the next step is analyzing the values.
+
+## Annual trends
+
+To handle the amount of values in the data, it is necessary to summarize it to a yearly scale. To get a general idea of how the runoff values changed, the plot below illustrates mean runoff values in all stations for each year.
+
+```{r, echo=FALSE, fig.align='center'}
+ggplot(runoff_yearly_stats_sum, aes(year, mean_year)) +
+  geom_line() +
+  theme_bw() +
+  ylab('Mean runoff')
+```
+
+This plot shows a very steep decline in values after the year 1820. However, this investigation focuses on the year 1980, and the plot does not show many changes happening around that period, since there is a lot of variation, except for the edge of the year scale. This may be due to the fact that the stations are in very different locations, and hence some have much heavier runoff usually, and others lighter, so the relatively big changes in lower runoff values are not represented in the plot.
+
+Therefore, to minimize this issue, percentage changes in runoff can be examined on a yearly scale, comparing the values before and after 1980. However, the runoff also naturally changes seasonally, meaning that higher values are present during summer and lower values during winter due to precipitation changes. Therefore, the charts below show the percentage changes for higher and lower values separately.
+
+```{r, echo=FALSE, fig.align='center'}
+max_plot <- ggplot(data = runoff_max_change, 
+       aes(x = reorder(ID, max_diff), y = max_diff, fill = max_diff > 0))+
+  geom_bar(stat = "identity")+
+  coord_flip()+
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in high runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Change", labels = c("Decrease", "Increase"))
+
+min_plot <- ggplot(data = runoff_min_change, 
+       aes(x = reorder(ID, min_diff), y = min_diff, fill = min_diff > 0))+
+  geom_bar(stat = "identity")+
+  coord_flip()+
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in low runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Change", labels = c("Decrease", "Increase"))
+saveRDS(runoff_min_change, './data/runoff_min_change')
+
+grid.arrange(max_plot, min_plot, ncol=2)
+```
+
+It can be seen on the charts above that high and low values have changed in different ways. Firstly, the higher values show some drastic increases since 1980, while the lower values show drastic decreases. If observed on a map, most decreases of high values come from the stations that are in mountain areas, while the increases are near the coasts. On the other hand, it is quite opposite for lower values. This can be explained by the fact that there was probably a change in precipitation, where there is less snow in mountain areas which are more affected by snow, and hence the rainy winters increased the usually low runoff. However, the areas of lower altitude experienced a decrease due to the absence of snow melt.
+
+Secondly, both values show a general increase in runoff in most stations. The changes in higher values are definitely more extreme than the increases in lower values, so to further inspect these changes, the stations could be divided into multiple smaller groups based on the shared characteristics and trends observed until this point.
+
+## Classification
+
+There have already been a few classifications introduced due to the nature of the stations, therefore the first would be the distinction based on location. The first map showed two clusters of stations in a certain part of Europe, hence the division into East, West, North and Central Europe was made. Therefore, the plots below show these same changes, colored based on the location of the station.
+
+```{r, echo=FALSE, fig.align='center'}
+max_plot <- ggplot(data = stations_info, 
+       aes(x = reorder(ID, max_diff), y = max_diff, fill = location_class))+
+  geom_bar(stat = "identity")+
+  coord_flip() +
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in high runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Location class")
+
+min_plot <- ggplot(data = stations_info, 
+       aes(x = reorder(ID, min_diff), y = min_diff, fill = location_class))+
+  geom_bar(stat = "identity")+
+  coord_flip() +
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in low runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Location class")
+
+grid.arrange(max_plot, min_plot, ncol=2)
+```
+
+Since there are not as many station in West and East Europe, the focus is on the differences between Central and North Europe. The main difference in the changes between these two areas is the fact that Central Europe accounts for most of the extreme changes in runoff. On the other hand, North Europe mostly shows no changes in runoff, or relatively small ones. This can be explained by the fact that North Europe has a much different landscape and climate than Central Europe. The change in precipitation that was previously described, is not as drastic in the north due to the lower temperatures that are present there. Therefore, the runoff shows some changes, but they are must more noticeable in Central Europe. 
+
+Another classification made is based on the altitude of the stations, since there were speculations about different behavior of runoff in mountain and coastal areas. Therefore, the plots below represent the same changes, colored by the different groups based on altitude.
+
+```{r, echo=FALSE, fig.align='center'}
+max_plot <- ggplot(data = stations_info, 
+       aes(x = reorder(ID, max_diff), y = max_diff, fill = altitude_class))+
+  geom_bar(stat = "identity")+
+  coord_flip() +
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in high runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Altitude class")
+
+min_plot <- ggplot(data = stations_info, 
+       aes(x = reorder(ID, min_diff), y = min_diff, fill = altitude_class))+
+  geom_bar(stat = "identity")+
+  coord_flip() +
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in low runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Altitude class")
+
+grid.arrange(max_plot, min_plot, ncol=2)
+```
+
+The plots above show a similar pattern as the ones before, the most drastic changes come from the lower coastal areas, which are present mainly in Central Europe. However, a big limitation to this analysis is the fact that there are some missing values in this category, even though we have seen that the missing values mostly come from Northern Europe. The last category for this analysis is the magnitude of runoff itself, therefore the charts below show the same changes, colored by different groups of runoff amount.
+
+```{r, echo=FALSE, fig.align='center'}
+max_plot <- ggplot(data = stations_info, 
+       aes(x = reorder(ID, max_diff), y = max_diff, fill = runoff_class))+
+  geom_bar(stat = "identity")+
+  coord_flip() +
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in high runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Runoff class")
+min_plot <- ggplot(data = stations_info, 
+       aes(x = reorder(ID, min_diff), y = min_diff, fill = runoff_class))+
+  geom_bar(stat = "identity")+
+  coord_flip() +
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in low runoff values after 1980', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Runoff class")
+
+grid.arrange(max_plot, min_plot, ncol=2)
+```
+
+It can be seen on the charts above that the most drastic changes come from stations that usually have quite a large amount of runoff. These areas are usually coastal areas, since the catchment area is greater on a more homogeneous landscape, while mountain areas have lower amounts of runoff. It is quite clear that these mountain areas of low runoff have experienced a decrease in high runoff and increase in low runoff, which is already explained by the change in precipitation.
+
+To further investigate the suspicions about changes in precipitation, the data should be divided to a seasonal scale, separating winter and summer runoff, and their changes.
+
+## Summer and winter runoff
+
+After dividing the dataset into summer and winter, the same percentage changes can be calculated in order to compare summer and winter runoff before and after 1980. Therefore, the plots below represent these changes.
+
+```{r, echo=FALSE, fig.align='center'}
+summer <- ggplot(data = runoff_overall_summer, 
+       aes(x = reorder(ID, overall_diff), y = overall_diff, fill = overall_diff > 0))+
+  geom_bar(stat = "identity")+
+  coord_flip()+
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in runoff values after 1980 in summer', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Change", labels = c("Decrease", "Increase"))
+
+winter <- ggplot(data = runoff_overall_winter, 
+       aes(x = reorder(ID, overall_diff), y = overall_diff, fill = overall_diff > 0))+
+  geom_bar(stat = "identity")+
+  coord_flip()+
+  theme(axis.text.y=element_blank()) +
+  labs(title='Changes in runoff values after 1980 in winter', x='Stations', y='Change')+
+  scale_fill_discrete(name = "Change", labels = c("Decrease", "Increase"))
+
+grid.arrange(summer, winter, ncol=2)
+```
+
+There are quite a few interesting characteristics to the plots above. The most interesting is the fact that almost all stations had quite a significant increase in winter runoff, while the summer runoff is quite divided, however most stations experienced a decrease. The fact that there has been an increase of winter runoff can confirm the suspicion of precipitation changes, that due to the higher temperatures and climate changes, there is less precipitation in the form of snow, and more in the form of rain. Therefore, there is much more immediate runoff during winter since it is not deposited as snow until summer. 
+
+On the other hand, summer runoff changes require some more investigation, so the map below shows the stations again, but colored based on whether the summer runoff increased or decreased.
+
+
+```{r, echo=FALSE, fig.align='center'}
+stations_coords_summer <- st_as_sf(runoff_overall_summer,
+                            coords = c('Lon', 'Lat'),
+                            crs = 4326)
+stat_map_summer <- mapview(stations_coords_summer, map.types = 'OpenTopoMap', zcol = "change")
+stat_map_summer
+```
+
+As suspected before, there has been a decrease mostly in mountain areas, due to the absence of deposited snow that usually melts during summer and increases runoff. However, mostly the coastal areas experienced an increase in runoff, since they are not as affected by these precipitation and temperature changes. 
+
+To investigate the details on a smaller scale, five stations have been chosen based on their characteristics and the way they stood out during the investigation.
+
+# A Closer Look
+
+Since there is a vast amount of data, the easiest way to explore monthly changes and inspect the data in detail is by focusing on certain rivers and stations. Some stations were chosen due to the fact that they stood out in an unusual way, while the others follow the patterns seen in the investigation before, and therefore can show insights. Hence, the analysis of the stations starts again at exploring their location and properties.
+
+## Five stations
+
+Firstly, the table below shows the main properties of the five chosen stations. All of them represent different rivers in Europe, and mostly belong to different groups made in the classifications. The stations that were chosen to represent the main runoff trends noticed so far are SOR2 and KOEL, located in Sweden and Germany to represent the two clusters. However, they both show other properties of runoff, since SOR2 is located in a mountain area, while KOEL is located in a coastal area, and therefore the effect of altitude of runoff can be investigated. 
+
+```{r, echo=FALSE}
+five_stations <- stations_info[ID %in% c(6742900, 6340120, 6401601, 6335060, 6233680)]
+kable(five_stations[, c('ID', 'Station', 'River', 'Country', 'runoff_class', 'location_class', 'altitude_class')], caption='Information about the five stations')
+```
+
+Regarding the other three stations, they were chosen due to the fact that their runoff values were unusual and stood out in a certain way. The map below shows the distribution of these stations.
+
+```{r, echo=FALSE}
+stations_coords <- st_as_sf(five_stations,
+                            coords = c('Lon', 'Lat'),
+                            crs = 4326)
+stat_map <- mapview(stations_coords, map.types = 'OpenTopoMap')
+stat_map
+```
+
+As it can be seen above, the stations are quite far from each other, meaning that the runoff in different parts of Europe can be investigated. Throughout the investigation, the influence of the two stations clusters in Northern and Central Europe has made it quite hard to determine whether those runoff trends are present in other parts of Europe, since there are not as many stations in these areas. 
+
+However, the station CEAI in Romania has stood out during the investigation, even though it is the only station in Romania. The runoff values in this station have been quite extreme, and it was often seen as an outlier, hence it was surprising that it is located in Romania and it could show interesting patterns, which is why it was chosen.
+
+The station REYK in Iceland was chosen solely due to the fact that it is quite isolated and the influence of the island might show different runoff features. The last station DRES in Germany was chosen due to the fact that there were some interesting features in the statistics, since this station showed 10 NA's for standard deviation in the first ten years of measuring runoff and hence investigating this station might be helpful. Therefore, the next step is analysing the runoff values for these stations.
+
+## Monthly changes
+
+The charts below show the mean runoff values for each month in the five stations to investigate seasonality. Right away, there are some stations that have quite similar patterns, which is expected due to their locations. Romanian and German stations show a similar patterns, while Iceland and Sweden stations show a compeltely different pattern. 
+
+```{r, echo=FALSE, fig.align='center'}
+ggplot(five_month, aes(x=month, y=Value)) +
+  geom_line() +
+  facet_wrap(~Station, scales='free') +
+  theme_bw() +
+  ylab('Runoff value')
+```
+
+Regarding the German and Romanian stations, they show quite an increase in winter months, while a decrease in summer months. As discussed above, this is quite expected in these locations due to the precipitation changes and these stations might help to discover more details about other stations surrounding them that follow the same pattern. The main difference between Germany and Romania is the fact that Romanian runoff values are much larger. This could be explained by the fact that the climate in this location is much warmer and is influenced by the Mediterranean and the Black Sea, which is why this station stood out, since there are no other stations located in Southern Europe that might show the same patterns due to climate.
+
+Regarding the Iceland and Sweden stations, they show quite the opposite pattern in seasonality, their peaks are during the summer months and they are quite drastic, while the winter months have much lower runoff. Since these stations are located in the north, the precipitation and temperature changes do not have such a large influence, and the snow is deposited during winter and melts into runoff during summer due to the temperatures. However, the station in Iceland has much lower values in general, due to the location and water supply in general. Due to the influence of glaciers above, it could also be interesting to see the changes before and after 1980, hence the graphs below show the differences between summer and winter in the two time periods.
+
+```{r, echo=FALSE, fig.align='center'}
+five_win_sum <- merge(five_win_sum, five_stations[, c('ID', 'Station')], by = 'ID')
+ggplot(five_win_sum, aes(season, Value, fill = period)) +
+  geom_boxplot() +
+  facet_wrap(~Station, scales = 'free_y') +
+  scale_fill_manual(values = colset_4[c(4, 1)]) +
+  xlab(label = "Season") +
+  ylab(label = "Runoff") +
+  theme_bw()
+```
+
+As seen before, the runoff in summer months is lower than in the winter months in Central Europe, but it is the opposite in Northern Europe. However, the comparison between the time periods is quite interesting. In Central Europe, there has been a slight increase in winter months and a decrease in summer months, as suspected. However, in Romania, winter runoff has stayed quite the same, perhaps due to the warmer climate which is why the snow change might have not had a great influence.
+
+On the other hand, the Northern stations barely show a change over the years, which might confirm the suspicion that the runoff changes are influenced by the temperature and climate changes, which in turn influence the precipitation. To see the changes in more detail, regression slopes can be investigated.
+
+## Annual changes
+
+To see the yearly changes in more detail, the graphs below can be examined, along with regression lines to show the overall trend since the values differ quite a lot yearly. The first set of graphs shows the changes in summer runoff, while the second one shows the changes in winter.
+
+```{r, echo=FALSE, fig.align='center'}
+five_summer <- merge(five_summer, five_stations[, c('ID', 'Station')], by = 'ID')
+ggplot(five_summer[year>=1950], aes(x = year, y = Value)) +
+  geom_line(col = colset_4[3])+
+  geom_point(col = colset_4[3])+
+  facet_wrap(~Station, scales = 'free') +
+  geom_smooth(method = 'lm', formula = y~x, se = 0, col = colset_4[1]) +
+  geom_smooth(method = 'loess', formula = y~x, se = 0, col = colset_4[4]) +
+  scale_color_manual(values = colset_4[c(1, 2, 4)]) +
+  labs(x='Year', y='Runoff values', title='Changes in summer runoff') +
+  theme_bw()
+```
+
+It can be seen on the graphs above that there have not been much drastic changes over the years. Most stations experienced a decline in summer runoff, which is expected, however, the northern stations have experienced a large jump in summer runoff right after the year 1980, which can be explained perhaps by the melting of glaciers and ice as the temperatures rose. The charts below show winter runoff, which holds more information.
+
+```{r, echo=FALSE, fig.align='center'}
+five_winter <- merge(five_winter, five_stations[, c('ID', 'Station')], by = 'ID')
+ggplot(five_winter[year>=1950], aes(x = year, y = Value)) +
+  geom_line(col = colset_4[3])+
+  geom_point(col = colset_4[3])+
+  facet_wrap(~Station, scales = 'free') +
+  geom_smooth(method = 'lm', formula = y~x, se = 0, col = colset_4[1]) +
+  geom_smooth(method = 'loess', formula = y~x, se = 0, col = colset_4[4]) +
+  scale_color_manual(values = colset_4[c(1, 2, 4)]) +
+  labs(x='Year', y='Runoff values', title='Changes in winter runoff') +
+  theme_bw()
+```
+
+It can be seen above that most stations experienced quite a drastic increase in winter runoff, which was hard to see previously in boxplots due to low values in northern stations. This increase can be seen in all stations, except for Iceland which has extremely low values for winter runoff and it has stayed quite constant. However, the largest increase is in Sweden, where the winter runoff values are also quite small, which would make any change more drastic. These increases are also expected, and the fact that the change in winter is more drastic than the change in summer is also explained by the fact that the change in precipitation is more effective in winter, since there might still be deposits of snow that are melting in the summer but those deposits are slowly perishing. However, in winter the changes in precipitation are immediate.
+
+## Representation
+
+Based on this information about the stations, it seems that they all represent different locations and altitudes, which could be the main influences on the runoff. The stations in Romania and Germany show similar characteristics, however, Romania is more influenced by the warmer climate and has some different characteristics from the main trends found for all stations in general. On the other hand, the stations in Germany follow the trends found earlier, and could be quite good representations for the rest of the data, but specifically for Central Europe. The station in Romania might not be as good of a representation, since there are no other stations in that region that could help confirm the suspicions.
+
+Regarding the northern stations, the one in Sweden does not follow the same trends as Central Europe, the changes are quite less drastic, however, those characteristics were found in the main investigations, where most northern stations had quite stable runoff due to different conditions. Therefore, this station could be a good representation of the Northern Europe runoff. The station in Iceland however is quite different, it is quite isolated and there are not as many impacts on the runoff, besides the surrounding ocean. Therefore, this station would not be a good representation, since the area it represent is quite small and insignificant.
+
+# Conclusions
+
+Throughout this exploration, there have been some trends that could be noticed in river runoff. As the investigation got more detailed, these trends could be confirmed with more evidence confirming the suspicions about runoff changes. It is quite complicated to consider the changes in all European rivers, since it was found that different regions have different trends in runoff. The regions that were explored in more detailed are North and Central Europe, however, the other regions cannot be talked about with confidence due to the lack of data. Therefore, the main influences on river runoff in Europe were found to be the climate, surrounding topography and altitude, and location.
+
+Considering Central Europe, it was seen that the runoff has increased over the last several years during winter and decreased during summer, however the changes are more noticeable in winter. On the other hand, in Northern Europe the changes are quite less drastic, even though they are present. The hypothesis about these changes being influenced by the change in temperature, and hence precipitation type, were confirmed for these regions. The most intense changes were right after 1980, and ever since then they have been steadily developing, and due to these reasons it could be said that they are expected to continue this way in the future, and might get more intense.  It would be quite an improvement to the investigation if there was data present about precipitation itself, so that these theories could be further supported and investigated.
