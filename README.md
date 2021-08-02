@@ -1,5 +1,4 @@
-# eda_rivers_project
-Code for the course of Exploratory Data Analysis of the Bachelor of Environmental Data Science.
+# Code for the course of Exploratory Data Analysis of the Bachelor of Environmental Data Science (individual project).
 
 Analysis hypothesis: The hydroclimatic changes observed in the Rhine basin are happening across multiple European rivers.
 
