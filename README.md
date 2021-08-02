@@ -16,3 +16,5 @@ Script description:
 02_data_exploration.R Inspects the yearly runoff and changes, while classifying the data into categories.
 
 03_representing_stations.R Chooses five stations and inspects runoff on a smaller scale.
+
+Full report published at https://rpubs.com/verav/785981
